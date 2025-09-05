@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Chargement config deploy
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/config.env"
+source "${SCRIPT_DIR}/../config.env"
 
 BRANCH="${1:-$DEFAULT_BRANCH}"
 BACKUP_PATH="${2:-}"   # optionnel: chemin absolu vers un backup.sql
