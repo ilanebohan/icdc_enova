@@ -7,14 +7,10 @@ on:
         description: "Branch to deploy"
         required: true
         default: "main"
-      backup_path:
-        description: "Repo path to backup.sql (optional, e.g. db/backup.sql)"
-        required: false
-        default: ""
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: debian-latest
     steps:
       - name: Checkout infra repo
         uses: actions/checkout@v4
@@ -22,16 +18,7 @@ jobs:
       - name: Setup SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}   # clé pour se connecter au serveur
-
-      - name: Copy backup.sql to server (if provided)
-        if: ${{ github.event.inputs.backup_path != '' }}
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          source: ${{ github.event.inputs.backup_path }}
-          target: /tmp/backup.sql
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Run deploy.sh on server
         uses: appleboy/ssh-action@v1.2.0
@@ -39,31 +26,12 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           script: |
-            # passer les variables secrets à deploy.sh pour générer .env
             export ELASTIC_APM_SERVER_URL="${{ secrets.ELASTIC_APM_SERVER_URL }}"
             export APM_API_KEY="${{ secrets.APM_API_KEY }}"
             export ES_HOST="${{ secrets.ES_HOST }}"
-            export ES_API_KEY="${{ secretsES_API_KEY }}"  # attention au nom exact de ton secret
-            export MYSQL_ROOT_PASSWORD="${{ secrets.MYSQL_ROOT_PASSWORD }}"
-            export MYSQL_DATABASE="${{ secrets.MYSQL_DATABASE }}"
-            export MYSQL_USER="${{ secrets.MYSQL_USER }}"
-            export MYSQL_PASSWORD="${{ secrets.MYSQL_PASSWORD }}"
-
-            # config deploy (si pas déjà posée)
-            export APP_REPO_SSH="${{ secrets.APP_REPO_SSH }}"   # ex: git@github.com:ilanebohan/enova.git
+            export ES_API_KEY="${{ secrets.ES_API_KEY }}"
+            export APP_REPO_SSH="${{ secrets.APP_REPO_SSH }}"
             export APP_DIR="/opt/enova"
             export SERVER_DIR="/opt/enova/server"
 
-            # créer /opt/enova-deploy si besoin et poser le script
-            sudo mkdir -p /opt/enova-deploy
-            sudo chown $USER:$USER /opt/enova-deploy
-            # (on suppose que deploy.sh est déjà sur le serveur; sinon scp préalable)
-
-            # lancer le déploiement
-            if [ -f /tmp/backup.sql ]; then
-              sudo APP_REPO_SSH="$APP_REPO_SSH" APP_DIR="$APP_DIR" SERVER_DIR="$SERVER_DIR" \
-                bash /opt/enova-deploy/deploy.sh "${{ github.event.inputs.branch }}" "/tmp/backup.sql"
-            else
-              sudo APP_REPO_SSH="$APP_REPO_SSH" APP_DIR="$APP_DIR" SERVER_DIR="$SERVER_DIR" \
-                bash /opt/enova-deploy/deploy.sh "${{ github.event.inputs.branch }}"
-            fi
+            sudo bash /opt/enova-deploy/deploy.sh "${{ github.event.inputs.branch }}"
