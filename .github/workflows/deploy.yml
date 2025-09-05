@@ -25,6 +25,7 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             export ELASTIC_APM_SERVER_URL="${{ secrets.ELASTIC_APM_SERVER_URL }}"
             export APM_API_KEY="${{ secrets.APM_API_KEY }}"
