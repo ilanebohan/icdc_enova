@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# === Utiliser la clé SSH dédiée générée précédemment ===
-KEY_PATH="/home/debian/.ssh/enova_deploy"     # adapte si besoin
+# === Utiliser la clé SSH dédiée ===
+KEY_PATH="/home/debian/.ssh/enova_deploy"      # adapte si besoin
 SSH_CMD="ssh -i ${KEY_PATH} -o IdentitiesOnly=yes"
 export GIT_SSH_COMMAND="${SSH_CMD}"
 mkdir -p ~/.ssh
@@ -11,7 +11,6 @@ chmod 644 ~/.ssh/known_hosts || true
 
 # === Paramètres ===
 BRANCH="${1:-main}"
-BACKUP_PATH="${2:-}"           # optionnel: /tmp/backup.sql
 APP_REPO="${APP_REPO_SSH:-git@github.com:ilanebohan/enova.git}"
 APP_DIR="${APP_DIR:-/opt/enova}"
 SERVER_DIR="${SERVER_DIR:-/opt/enova/server}"
@@ -22,7 +21,7 @@ echo "[deploy] Branch=$BRANCH -> ENV=$ENV"
 
 # --- Pré-requis Docker ---
 if ! command -v docker >/dev/null 2>&1; then
-  echo "[ERROR] Docker manquant. Installe-le avant (ou ajoute l'étape dans ta première init)."
+  echo "[ERROR] Docker manquant. Installe-le avant."
   exit 1
 fi
 
@@ -48,10 +47,7 @@ fi
 [[ -f "$COMPOSE_FILE" ]] || { echo "[ERROR] Aucun docker compose dans ${SERVER_DIR}"; exit 1; }
 echo "[docker] using ${COMPOSE_FILE}"
 
-# --- (Re)générer le .env depuis les VARS CI si fourni ---
-# Les variables attendues (passe-les via ta CI): 
-# ELASTIC_APM_SERVER_URL, APM_API_KEY, ES_HOST, ES_API_KEY, 
-# MYSQL_ROOT_PASSWORD, MYSQL_DATABASE, MYSQL_USER, MYSQL_PASSWORD
+# --- (Re)générer le .env ---
 ENV_FILE="${SERVER_DIR}/.env"
 echo "[env] (re)création de ${ENV_FILE}"
 cat > "$ENV_FILE" <<EOF
@@ -66,7 +62,7 @@ APM_API_KEY=${APM_API_KEY:-}
 ES_HOST=${ES_HOST:-}
 ES_API_KEY=${ES_API_KEY:-}
 
-# MySQL
+# MySQL (si utilisé)
 MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-root}
 MYSQL_DATABASE=${MYSQL_DATABASE:-enova}
 MYSQL_USER=${MYSQL_USER:-enova}
@@ -78,29 +74,9 @@ echo "[docker] compose pull + up -d"
 docker compose -f "$COMPOSE_FILE" pull || true
 docker compose -f "$COMPOSE_FILE" up -d
 
-# --- Import backup si présent ---
-if [[ -n "$BACKUP_PATH" && -f "$BACKUP_PATH" ]]; then
-  echo "[db] Import backup: $BACKUP_PATH"
-  # attendre MySQL healthy s'il est dans compose sous le nom 'enova-db'
-  if docker ps --format '{{.Names}}' | grep -q '^enova-db$'; then
-    echo -n "[db] attente santé MySQL"
-    for i in {1..40}; do
-      STATUS=$(docker inspect --format '{{json .State.Health.Status}}' enova-db 2>/dev/null || echo '"unknown"')
-      [[ "$STATUS" == '"healthy"' ]] && { echo " -> OK"; break; }
-      printf "."
-      sleep 3
-    done
-    docker exec -i enova-db sh -lc \
-      "exec mysql -u\"\$MYSQL_USER\" -p\"\$MYSQL_PASSWORD\" -D\"\$MYSQL_DATABASE\"" \
-      < "$BACKUP_PATH"
-    echo "[db] Import terminé"
-  else
-    echo "[warn] Service 'enova-db' introuvable, import sauté."
-  fi
-fi
-
 echo "[docker] ps"
 docker compose -f "$COMPOSE_FILE" ps
 
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 echo "✅ Déploiement OK — API: http://${IP:-localhost}:3000/health"
+
