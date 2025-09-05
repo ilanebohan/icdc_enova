@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# === Force utilisation d'une clé SSH spécifique ===
+KEY_PATH="/home/ubuntu/.ssh/enova_deploy"
+SSH_CMD="ssh -i ${KEY_PATH} -o IdentitiesOnly=yes"
+export GIT_SSH_COMMAND="${SSH_CMD}"
+
+# Assurer que github.com est connu (évite les prompts)
+mkdir -p ~/.ssh
+ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+chmod 644 ~/.ssh/known_hosts || true
+
+
 # Chargement config deploy
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../config.env"
