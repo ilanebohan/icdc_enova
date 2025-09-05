@@ -1,8 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# === Utiliser la clé SSH dédiée ===
-KEY_PATH="/home/debian/.ssh/enova_deploy"      # adapte si besoin
+# ===== Helpers =====
+log() { echo "[$(date +'%F %T')] $*"; }
+wait_http() {
+  # wait_http <url> <timeout_sec>
+  local url="$1" timeout="${2:-60}" start now
+  start=$(date +%s)
+  while true; do
+    if curl -fsS "$url" >/dev/null 2>&1; then return 0; fi
+    now=$(date +%s)
+    if (( now - start >= timeout )); then return 1; fi
+    sleep 2
+  done
+}
+
+# === Utiliser la clé SSH dédiée pour git ===
+KEY_PATH="/home/debian/.ssh/enova_deploy"
 SSH_CMD="ssh -i ${KEY_PATH} -o IdentitiesOnly=yes"
 export GIT_SSH_COMMAND="${SSH_CMD}"
 mkdir -p ~/.ssh
@@ -17,22 +31,22 @@ SERVER_DIR="${SERVER_DIR:-/opt/enova/server}"
 
 # ENV selon la branche
 if [[ "$BRANCH" == "main" ]]; then ENV="production"; else ENV="development"; fi
-echo "[deploy] Branch=$BRANCH -> ENV=$ENV"
+log "[deploy] Branch=$BRANCH -> ENV=$ENV"
 
 # --- Pré-requis Docker ---
 if ! command -v docker >/dev/null 2>&1; then
-  echo "[ERROR] Docker manquant. Installe-le avant."
+  log "[ERROR] Docker manquant. Installe-le avant."
   exit 1
 fi
 
 # --- Clone / Pull code ---
 mkdir -p "$APP_DIR"
 if [[ ! -d "${APP_DIR}/.git" ]]; then
-  echo "[git] clone $APP_REPO -> $APP_DIR"
+  log "[git] clone $APP_REPO -> $APP_DIR"
   git clone "$APP_REPO" "$APP_DIR"
 fi
 cd "$APP_DIR"
-echo "[git] fetch/checkout $BRANCH"
+log "[git] fetch/checkout $BRANCH"
 git fetch origin "$BRANCH"
 git checkout "$BRANCH"
 git pull --ff-only origin "$BRANCH"
@@ -44,12 +58,16 @@ if [[ ! -f "$COMPOSE_FILE" ]]; then
     [[ -f "${SERVER_DIR}/${alt}" ]] && COMPOSE_FILE="${SERVER_DIR}/${alt}" && break
   done
 fi
-[[ -f "$COMPOSE_FILE" ]] || { echo "[ERROR] Aucun docker compose dans ${SERVER_DIR}"; exit 1; }
-echo "[docker] using ${COMPOSE_FILE}"
+[[ -f "$COMPOSE_FILE" ]] || { log "[ERROR] Aucun docker compose dans ${SERVER_DIR}"; exit 1; }
+log "[docker] using ${COMPOSE_FILE}"
+
+# --- Stop du stack avant install ---
+log "[docker] down (stop + remove orphans)"
+docker compose -f "$COMPOSE_FILE" down --remove-orphans || true
 
 # --- (Re)générer le .env ---
 ENV_FILE="${SERVER_DIR}/.env"
-echo "[env] (re)création de ${ENV_FILE}"
+log "[env] (re)création de ${ENV_FILE}"
 cat > "$ENV_FILE" <<EOF
 # auto-généré par deploy.sh
 ENV=${ENV}
@@ -63,30 +81,62 @@ ES_HOST=${ES_HOST:-}
 ES_API_KEY=${ES_API_KEY:-}
 EOF
 
-# --- Install deps (npm) AVANT le up ---
+# --- Install deps (npm) AVANT le up (bloquant) ---
 if [[ -f "${SERVER_DIR}/package.json" ]]; then
-  echo "[npm] install dans ${SERVER_DIR}"
-  # crée node_modules si absent (évite droits root bizarres)
+  log "[npm] installation dans ${SERVER_DIR}"
   mkdir -p "${SERVER_DIR}/node_modules"
-
-  # exécute npm dans un conteneur Node, avec l'UID/GID courant pour garder les bons droits
+  START=$(date +%s)
   docker run --rm \
     -u "$(id -u)":"$(id -g)" \
     -v "${SERVER_DIR}:/app" -w /app \
-    node:20-alpine sh -lc 'npm config set audit false; npm config set fund false; (npm ci --omit=dev || npm i --omit=dev)'
-
-  echo "[npm] ok"
+    node:20-alpine sh -lc '
+      set -e
+      npm config set audit false
+      npm config set fund false
+      if [ -f package-lock.json ]; then
+        echo "[npm] package-lock.json trouvé -> npm ci --omit=dev"
+        npm ci --omit=dev
+      else
+        echo "[npm] pas de lock -> npm i --omit=dev"
+        npm i --omit=dev
+      fi
+    '
+  D=$(( $(date +%s) - START ))
+  log "[npm] terminé en ${D}s"
 else
-  echo "[npm] SKIP: pas de package.json dans ${SERVER_DIR}"
+  log "[npm] SKIP: pas de package.json dans ${SERVER_DIR}"
 fi
 
-# --- Lancer / mettre à jour les services ---
-echo "[docker] compose pull + up -d"
+# --- Pull images + Start ---
+log "[docker] compose pull"
 docker compose -f "$COMPOSE_FILE" pull || true
+
+log "[docker] compose up -d"
 docker compose -f "$COMPOSE_FILE" up -d
 
-echo "[docker] ps"
+# --- Attentes santé (si services présents) ---
+# Attendre DB (si conteneur s'appelle enova-db avec healthcheck)
+if docker ps --format '{{.Names}}' | grep -q '^enova-db$'; then
+  log "[wait] MySQL en santé"
+  for i in {1..40}; do
+    STATUS=$(docker inspect --format '{{json .State.Health.Status}}' enova-db 2>/dev/null || echo '"unknown"')
+    [[ "$STATUS" == '"healthy"' ]] && { log "[wait] MySQL healthy"; break; }
+    sleep 3
+    if [[ $i -eq 40 ]]; then log "[warn] MySQL pas healthy après ~120s (continue)"; fi
+  done
+fi
+
+# Attendre API /health
+IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+API_URL="http://${IP:-127.0.0.1}:3000/health"
+log "[wait] API $API_URL"
+if wait_http "$API_URL" 90; then
+  log "[ok] API up"
+else
+  log "[warn] Timeout: API /health non joignable après 90s"
+fi
+
+log "[docker] ps"
 docker compose -f "$COMPOSE_FILE" ps
 
-IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-echo "✅ Déploiement OK — API: http://${IP:-localhost}:3000/health"
+log "✅ Déploiement OK — API: $API_URL"
