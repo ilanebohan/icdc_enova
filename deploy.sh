@@ -61,12 +61,6 @@ APM_API_KEY=${APM_API_KEY:-}
 # Elasticsearch (Filebeat)
 ES_HOST=${ES_HOST:-}
 ES_API_KEY=${ES_API_KEY:-}
-
-# MySQL (si utilisé)
-MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-root}
-MYSQL_DATABASE=${MYSQL_DATABASE:-enova}
-MYSQL_USER=${MYSQL_USER:-enova}
-MYSQL_PASSWORD=${MYSQL_PASSWORD:-enova}
 EOF
 
 # --- Lancer / mettre à jour les services ---
