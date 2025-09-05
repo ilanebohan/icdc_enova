@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # === Force utilisation d'une clé SSH spécifique ===
-KEY_PATH="/home/ubuntu/.ssh/enova_deploy"
+KEY_PATH="~/.ssh/enova_deploy"
 SSH_CMD="ssh -i ${KEY_PATH} -o IdentitiesOnly=yes"
 export GIT_SSH_COMMAND="${SSH_CMD}"
 
