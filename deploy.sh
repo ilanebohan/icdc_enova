@@ -63,6 +63,23 @@ ES_HOST=${ES_HOST:-}
 ES_API_KEY=${ES_API_KEY:-}
 EOF
 
+# --- Install deps (npm) AVANT le up ---
+if [[ -f "${SERVER_DIR}/package.json" ]]; then
+  echo "[npm] install dans ${SERVER_DIR}"
+  # crée node_modules si absent (évite droits root bizarres)
+  mkdir -p "${SERVER_DIR}/node_modules"
+
+  # exécute npm dans un conteneur Node, avec l'UID/GID courant pour garder les bons droits
+  docker run --rm \
+    -u "$(id -u)":"$(id -g)" \
+    -v "${SERVER_DIR}:/app" -w /app \
+    node:20-alpine sh -lc 'npm config set audit false; npm config set fund false; (npm ci --omit=dev || npm i --omit=dev)'
+
+  echo "[npm] ok"
+else
+  echo "[npm] SKIP: pas de package.json dans ${SERVER_DIR}"
+fi
+
 # --- Lancer / mettre à jour les services ---
 echo "[docker] compose pull + up -d"
 docker compose -f "$COMPOSE_FILE" pull || true
@@ -73,4 +90,3 @@ docker compose -f "$COMPOSE_FILE" ps
 
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 echo "✅ Déploiement OK — API: http://${IP:-localhost}:3000/health"
-
