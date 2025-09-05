@@ -35,4 +35,4 @@ jobs:
             export APP_DIR="/opt/enova"
             export SERVER_DIR="/opt/enova/server"
 
-            sudo bash /opt/enova-deploy/deploy.sh "${{ github.event.inputs.branch }}"
+            sudo bash /opt/enova-deploy/icdc_enova/deploy.sh "${{ github.event.inputs.branch }}"
