@@ -1,26 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ===== Helpers =====
 log() { echo "[$(date +'%F %T')] $*"; }
-wait_http() {
-  # wait_http <url> <timeout_sec>
-  local url="$1" timeout="${2:-60}" start now
-  start=$(date +%s)
-  while true; do
-    if curl -fsS "$url" >/dev/null 2>&1; then return 0; fi
-    now=$(date +%s)
-    if (( now - start >= timeout )); then return 1; fi
-    sleep 2
-  done
-}
+wait_http() { local u="$1" t="${2:-60}" s=$(date +%s); while ! curl -fsS "$u" >/dev/null 2>&1; do [[ $(( $(date +%s)-s )) -ge $t ]] && return 1; sleep 2; done; }
 
-# === Utiliser la clé SSH dédiée pour git ===
+# === Git (clé SSH) ===
 KEY_PATH="/home/debian/.ssh/enova_deploy"
-SSH_CMD="ssh -i ${KEY_PATH} -o IdentitiesOnly=yes"
-export GIT_SSH_COMMAND="${SSH_CMD}"
-mkdir -p ~/.ssh
-ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+export GIT_SSH_COMMAND="ssh -i ${KEY_PATH} -o IdentitiesOnly=yes"
+mkdir -p ~/.ssh && ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null || true
 chmod 644 ~/.ssh/known_hosts || true
 
 # === Paramètres ===
@@ -31,15 +18,11 @@ SERVER_DIR="${SERVER_DIR:-/opt/enova/server}"
 
 # ENV selon la branche
 if [[ "$BRANCH" == "main" ]]; then ENV="production"; else ENV="development"; fi
-log "[deploy] Branch=$BRANCH -> ENV=$ENV"
+log "[deploy] branch=$BRANCH env=$ENV"
 
-# --- Pré-requis Docker ---
-if ! command -v docker >/dev/null 2>&1; then
-  log "[ERROR] Docker manquant. Installe-le avant."
-  exit 1
-fi
+command -v docker >/dev/null || { log "[ERROR] Docker manquant"; exit 1; }
 
-# --- Clone / Pull code ---
+# === Code à jour
 mkdir -p "$APP_DIR"
 if [[ ! -d "${APP_DIR}/.git" ]]; then
   log "[git] clone $APP_REPO -> $APP_DIR"
@@ -51,25 +34,24 @@ git fetch origin "$BRANCH"
 git checkout "$BRANCH"
 git pull --ff-only origin "$BRANCH"
 
-# --- Résoudre le fichier Compose ---
+# === Compose file
 COMPOSE_FILE="${SERVER_DIR}/docker-compose.yml"
 if [[ ! -f "$COMPOSE_FILE" ]]; then
-  for alt in "docker-compose.yaml" "compose.yaml"; do
+  for alt in docker-compose.yaml compose.yaml; do
     [[ -f "${SERVER_DIR}/${alt}" ]] && COMPOSE_FILE="${SERVER_DIR}/${alt}" && break
   done
 fi
 [[ -f "$COMPOSE_FILE" ]] || { log "[ERROR] Aucun docker compose dans ${SERVER_DIR}"; exit 1; }
-log "[docker] using ${COMPOSE_FILE}"
+log "[docker] compose file: $COMPOSE_FILE"
 
-# --- Stop du stack avant install ---
-log "[docker] down (stop + remove orphans)"
+# === Stop stack avant install
+log "[docker] down --remove-orphans"
 docker compose -f "$COMPOSE_FILE" down --remove-orphans || true
 
-# --- (Re)générer le .env ---
+# === Génère le .env (⇒ sera *vraiment* utilisé via --env-file)
 ENV_FILE="${SERVER_DIR}/.env"
-log "[env] (re)création de ${ENV_FILE}"
+log "[env] write ${ENV_FILE}"
 cat > "$ENV_FILE" <<EOF
-# auto-généré par deploy.sh
 ENV=${ENV}
 
 # APM
@@ -81,9 +63,13 @@ ES_HOST=${ES_HOST:-}
 ES_API_KEY=${ES_API_KEY:-}
 EOF
 
-# --- Install deps (npm) AVANT le up (bloquant) ---
+# Diag rapide (.env non vide)
+APM_URL=$(grep -E '^ELASTIC_APM_SERVER_URL=' "$ENV_FILE" | cut -d= -f2-)
+[[ -z "${APM_URL}" ]] && log "[WARN] ELASTIC_APM_SERVER_URL est vide → l’agent APM pointera sur 127.0.0.1:8200"
+
+# === NPM INSTALL bloquant AVANT tout démarrage
 if [[ -f "${SERVER_DIR}/package.json" ]]; then
-  log "[npm] installation dans ${SERVER_DIR}"
+  log "[npm] install dans ${SERVER_DIR}"
   mkdir -p "${SERVER_DIR}/node_modules"
   START=$(date +%s)
   docker run --rm \
@@ -93,50 +79,52 @@ if [[ -f "${SERVER_DIR}/package.json" ]]; then
       set -e
       npm config set audit false
       npm config set fund false
-      if [ -f package-lock.json ]; then
-        echo "[npm] package-lock.json trouvé -> npm ci --omit=dev"
-        npm ci --omit=dev
-      else
-        echo "[npm] pas de lock -> npm i --omit=dev"
-        npm i --omit=dev
-      fi
+      if [ -f package-lock.json ]; then npm ci --omit=dev; else npm i --omit=dev; fi
     '
-  D=$(( $(date +%s) - START ))
-  log "[npm] terminé en ${D}s"
+  log "[npm] terminé en $(( $(date +%s) - START ))s"
 else
   log "[npm] SKIP: pas de package.json dans ${SERVER_DIR}"
 fi
 
-# --- Pull images + Start ---
-log "[docker] compose pull"
-docker compose -f "$COMPOSE_FILE" pull || true
+# === Compose avec --env-file (clé du problème APM)
+COMPOSE_CMD=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
 
-log "[docker] compose up -d"
-docker compose -f "$COMPOSE_FILE" up -d
+log "[docker] pull"
+"${COMPOSE_CMD[@]}" pull || true
 
-# --- Attentes santé (si services présents) ---
-# Attendre DB (si conteneur s'appelle enova-db avec healthcheck)
-if docker ps --format '{{.Names}}' | grep -q '^enova-db$'; then
-  log "[wait] MySQL en santé"
-  for i in {1..40}; do
-    STATUS=$(docker inspect --format '{{json .State.Health.Status}}' enova-db 2>/dev/null || echo '"unknown"')
-    [[ "$STATUS" == '"healthy"' ]] && { log "[wait] MySQL healthy"; break; }
-    sleep 3
-    if [[ $i -eq 40 ]]; then log "[warn] MySQL pas healthy après ~120s (continue)"; fi
-  done
+log "[docker] up -d"
+"${COMPOSE_CMD[@]}" up -d
+
+# === Sanity checks
+
+# 1) Vérifier que l'API voit bien les variables APM
+log "[check] printenv (api) | grep ELASTIC_APM"
+if "${COMPOSE_CMD[@]}" exec -T api sh -lc 'printenv | grep -E "^ELASTIC_APM|^ENV="' ; then
+  :
+else
+  log "[WARN] impossible d’inspecter l’API (pas encore prête ?)"
 fi
 
-# Attendre API /health
+# 2) Optionnel: si tu utilises host.docker.internal sous Linux, check la résolution dans le conteneur
+if "${COMPOSE_CMD[@]}" ps | grep -q 'api'; then
+  if ! "${COMPOSE_CMD[@]}" exec -T api sh -lc 'getent hosts host.docker.internal >/dev/null 2>&1'; then
+    log "[WARN] host.docker.internal non résolu dans le conteneur. Sous Linux, ajoute dans docker-compose.yml:
+      extra_hosts:
+        - \"host.docker.internal:host-gateway\""
+  fi
+fi
+
+# 3) Health de l’API
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 API_URL="http://${IP:-127.0.0.1}:3000/health"
-log "[wait] API $API_URL"
+log "[wait] $API_URL"
 if wait_http "$API_URL" 90; then
   log "[ok] API up"
 else
-  log "[warn] Timeout: API /health non joignable après 90s"
+  log "[warn] API /health non joignable après 90s"
 fi
 
 log "[docker] ps"
-docker compose -f "$COMPOSE_FILE" ps
+"${COMPOSE_CMD[@]}" ps
 
 log "✅ Déploiement OK — API: $API_URL"
