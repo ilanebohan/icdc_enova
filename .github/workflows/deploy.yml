@@ -36,4 +36,4 @@ jobs:
             export SERVER_DIR="/opt/enova/server"
             
             sudo --preserve-env=ELASTIC_APM_SERVER_URL,APM_API_KEY,ES_HOST,ES_API_KEY,APP_REPO_SSH,APP_DIR,SERVER_DIR \
-              bash /opt/enova-deploy/deploy.sh "${{ github.event.inputs.branch }}"
+              bash /opt/enova-deploy/icdc_enova/deploy.sh "${{ github.event.inputs.branch }}"
