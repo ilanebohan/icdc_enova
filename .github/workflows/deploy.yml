@@ -31,6 +31,13 @@ jobs:
             export APM_API_KEY="${{ secrets.APM_API_KEY }}"
             export ES_HOST="${{ secrets.ES_HOST }}"
             export ES_API_KEY="${{ secrets.ES_API_KEY }}"
+
+            export DB_HOST="${{ secrets.DB_HOST }}"
+            export DB_PORT="${{ secrets.DB_PORT }}"
+            export MYSQL_USER="${{ secrets.MYSQL_USER }}"
+            export MYSQL_PASSWORD="${{ secrets.MYSQL_PASSWORD }}"
+            export MYSQL_DATABASE="${{ secrets.MYSQL_DATABASE }}"
+            
             export APP_REPO_SSH="${{ secrets.APP_REPO_SSH }}"
             export APP_DIR="/opt/enova"
             export SERVER_DIR="/opt/enova/server"
