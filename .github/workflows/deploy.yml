@@ -43,7 +43,8 @@ jobs:
             export SERVER_DIR="/opt/enova/server"
 
             for k in ELASTIC_APM_SERVER_URL APM_API_KEY ES_HOST ES_API_KEY DB_HOST DB_PORT MYSQL_USER MYSQL_PASSWORD MYSQL_DATABASE; do
-              if [ -n "${!k}" ]; then echo "$k=SET"; else echo "$k=EMPTY"; fi
+              v="$(printenv "$k")"
+              if [ -n "$v" ]; then echo "$k=SET"; else echo "$k=EMPTY"; fi
             done
             
             sudo --preserve-env=ELASTIC_APM_SERVER_URL,APM_API_KEY,ES_HOST,ES_API_KEY,APP_REPO_SSH,APP_DIR,SERVER_DIR \
