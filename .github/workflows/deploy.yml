@@ -37,10 +37,14 @@ jobs:
             export MYSQL_USER="${{ secrets.MYSQL_USER }}"
             export MYSQL_PASSWORD="${{ secrets.MYSQL_PASSWORD }}"
             export MYSQL_DATABASE="${{ secrets.MYSQL_DATABASE }}"
-            
+
             export APP_REPO_SSH="${{ secrets.APP_REPO_SSH }}"
             export APP_DIR="/opt/enova"
             export SERVER_DIR="/opt/enova/server"
+
+            for k in ELASTIC_APM_SERVER_URL APM_API_KEY ES_HOST ES_API_KEY DB_HOST DB_PORT MYSQL_USER MYSQL_PASSWORD MYSQL_DATABASE; do
+              if [ -n "${!k}" ]; then echo "$k=SET"; else echo "$k=EMPTY"; fi
+            done
             
             sudo --preserve-env=ELASTIC_APM_SERVER_URL,APM_API_KEY,ES_HOST,ES_API_KEY,APP_REPO_SSH,APP_DIR,SERVER_DIR \
               bash /opt/enova-deploy/icdc_enova/deploy.sh "${{ github.event.inputs.branch }}"
