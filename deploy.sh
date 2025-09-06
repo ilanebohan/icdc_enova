@@ -48,27 +48,42 @@ log "[docker] compose file: $COMPOSE_FILE"
 log "[docker] down --remove-orphans"
 docker compose -f "$COMPOSE_FILE" down --remove-orphans || true
 
-# === Génère le .env (⇒ sera *vraiment* utilisé via --env-file)
+# --- Génère / met à jour le .env sans toucher aux DB_* ---
 ENV_FILE="${SERVER_DIR}/.env"
-log "[env] write ${ENV_FILE}"
-cat > "$ENV_FILE" <<EOF
-ENV=${ENV}
+log "[env] upsert ${ENV_FILE}"
 
-# APM
-ELASTIC_APM_SERVER_URL=${ELASTIC_APM_SERVER_URL:-}
-APM_API_KEY=${APM_API_KEY:-}
+mkdir -p "$(dirname "$ENV_FILE")"
+touch "$ENV_FILE"
 
-# Elasticsearch (Filebeat)
-ES_HOST=${ES_HOST:-}
-ES_API_KEY=${ES_API_KEY:-}
+# sauvegarde
+cp -f "$ENV_FILE" "${ENV_FILE}.bak.$(date +%s)" || true
 
-# DB (MySQL)
-DB_HOST=host.docker.internal
-DB_PORT=3306
-MYSQL_USER=root
-MYSQL_PASSWORD=root
-MYSQL_DATABASE=enova
-EOF
+# upsert: met à jour une clef si valeur non vide, sinon ne change rien
+upsert_if_nonempty() {
+  local key="$1" val="$2"
+  [[ -z "${val}" ]] && return 0    # ne remplace pas avec vide
+  if grep -qE "^${key}=" "$ENV_FILE"; then
+    sed -i "s|^${key}=.*|${key}=${val//|/\\|}|" "$ENV_FILE"
+  else
+    echo "${key}=${val}" >> "$ENV_FILE"
+  fi
+}
+
+# ⚠️ on met à jour SEULEMENT ces clés (les DB_* restent tels quels dans le fichier)
+upsert_if_nonempty ENV "${ENV}"
+upsert_if_nonempty ELASTIC_APM_SERVER_URL "${ELASTIC_APM_SERVER_URL:-}"
+upsert_if_nonempty APM_API_KEY "${APM_API_KEY:-}"
+upsert_if_nonempty ES_HOST "${ES_HOST:-}"
+upsert_if_nonempty ES_API_KEY "${ES_API_KEY:-}"
+
+# si DB_HOST absent et tu veux un défaut côté serveur (optionnel) :
+if ! grep -qE '^DB_HOST=' "$ENV_FILE"; then
+  echo "DB_HOST=host.docker.internal" >> "$ENV_FILE"
+  echo "DB_PORT=3306" >> "$ENV_FILE"
+fi
+
+log "[env] preview (non sensible) :"
+grep -E '^(ENV|ELASTIC_APM_SERVER_URL|ES_HOST|DB_HOST|DB_PORT)=' "$ENV_FILE" || true
 
 # Diag rapide (.env non vide)
 APM_URL=$(grep -E '^ELASTIC_APM_SERVER_URL=' "$ENV_FILE" | cut -d= -f2-)
