@@ -61,6 +61,13 @@ APM_API_KEY=${APM_API_KEY:-}
 # Elasticsearch (Filebeat)
 ES_HOST=${ES_HOST:-}
 ES_API_KEY=${ES_API_KEY:-}
+
+#DB (MySQL)
+DB_HOST=host.docker.internal     # ou "db" si la DB est un service compose
+DB_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=root
+MYSQL_DATABASE=enova
 EOF
 
 # Diag rapide (.env non vide)
