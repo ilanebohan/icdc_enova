@@ -62,12 +62,12 @@ APM_API_KEY=${APM_API_KEY:-}
 ES_HOST=${ES_HOST:-}
 ES_API_KEY=${ES_API_KEY:-}
 
-# DB (MySQL)
-DB_HOST=host.docker.internal
-DB_PORT=3306
-MYSQL_USER=root
-MYSQL_PASSWORD=root
-MYSQL_DATABASE=enova
+# DB (depuis secrets)
+DB_HOST=${DB_HOST:-}
+DB_PORT=${DB_PORT:-}
+MYSQL_USER=${MYSQL_USER:-}
+MYSQL_PASSWORD=${MYSQL_PASSWORD:-}
+MYSQL_DATABASE=${MYSQL_DATABASE:-}
 EOF
 
 # Diag rapide (.env non vide)
