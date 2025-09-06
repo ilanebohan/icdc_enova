@@ -29,10 +29,15 @@ if [[ ! -d "${APP_DIR}/.git" ]]; then
   git clone "$APP_REPO" "$APP_DIR"
 fi
 cd "$APP_DIR"
-log "[git] fetch/checkout $BRANCH"
+
+# >>> CHANGEMENT: repartir propre avant de suivre la branche distante
+log "[git] reset to origin/$BRANCH (drop local changes)"
 git fetch origin "$BRANCH"
-git checkout "$BRANCH"
-git pull --ff-only origin "$BRANCH"
+git checkout "$BRANCH" || git checkout -b "$BRANCH"
+git reset --hard "origin/$BRANCH"
+git clean -fd
+git status --porcelain || true
+# <<<
 
 # === Compose file
 COMPOSE_FILE="${SERVER_DIR}/docker-compose.yml"
@@ -76,62 +81,4 @@ APM_URL=$(grep -E '^ELASTIC_APM_SERVER_URL=' "$ENV_FILE" | cut -d= -f2-)
 
 # === NPM INSTALL bloquant AVANT tout démarrage
 if [[ -f "${SERVER_DIR}/package.json" ]]; then
-  log "[npm] install dans ${SERVER_DIR}"
-  mkdir -p "${SERVER_DIR}/node_modules"
-  START=$(date +%s)
-  docker run --rm \
-    -u "$(id -u)":"$(id -g)" \
-    -v "${SERVER_DIR}:/app" -w /app \
-    node:20-alpine sh -lc '
-      set -e
-      npm config set audit false
-      npm config set fund false
-      if [ -f package-lock.json ]; then npm ci --omit=dev; else npm i --omit=dev; fi
-    '
-  log "[npm] terminé en $(( $(date +%s) - START ))s"
-else
-  log "[npm] SKIP: pas de package.json dans ${SERVER_DIR}"
-fi
-
-# === Compose avec --env-file (clé du problème APM)
-COMPOSE_CMD=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
-
-log "[docker] pull"
-"${COMPOSE_CMD[@]}" pull || true
-
-log "[docker] up -d"
-"${COMPOSE_CMD[@]}" up -d
-
-# === Sanity checks
-
-# 1) Vérifier que l'API voit bien les variables APM
-log "[check] printenv (api) | grep ELASTIC_APM"
-if "${COMPOSE_CMD[@]}" exec -T api sh -lc 'printenv | grep -E "^ELASTIC_APM|^ENV="' ; then
-  :
-else
-  log "[WARN] impossible d’inspecter l’API (pas encore prête ?)"
-fi
-
-# 2) Optionnel: si tu utilises host.docker.internal sous Linux, check la résolution dans le conteneur
-if "${COMPOSE_CMD[@]}" ps | grep -q 'api'; then
-  if ! "${COMPOSE_CMD[@]}" exec -T api sh -lc 'getent hosts host.docker.internal >/dev/null 2>&1'; then
-    log "[WARN] host.docker.internal non résolu dans le conteneur. Sous Linux, ajoute dans docker-compose.yml:
-      extra_hosts:
-        - \"host.docker.internal:host-gateway\""
-  fi
-fi
-
-# 3) Health de l’API
-IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-API_URL="http://${IP:-127.0.0.1}:3000/health"
-log "[wait] $API_URL"
-if wait_http "$API_URL" 90; then
-  log "[ok] API up"
-else
-  log "[warn] API /health non joignable après 90s"
-fi
-
-log "[docker] ps"
-"${COMPOSE_CMD[@]}" ps
-
-log "✅ Déploiement OK — API: $API_URL"
+  log "[npm] install dans
